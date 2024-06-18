@@ -1,0 +1,52 @@
+pipeline {
+    agent {
+        docker {
+            image 'maven:3.8.1-openjdk-11'
+            args '-v /root/.m2:/root/.m2'
+        }
+    }
+
+    environment {
+        DOCKER_IMAGE = "your-docker-username/your-image-name"
+        REGISTRY_CREDENTIALS = credentials('docker-hub-credentials')
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube Server') {
+                    sh 'mvn sonar:sonar'
+                }
+            }
+        }
+
+        stage('Docker Build and Push') {
+            when {
+                branch 'main'
+                expression {
+                    currentBuild.resultIsBetterOrEqualTo('SUCCESS') && !currentBuild.previousBuild?.resultIsBetterOrEqualTo('SUCCESS')
+                }
+            }
+            steps {
+                script {
+                    docker.withRegistry('https://registry.hub.docker.com', REGISTRY_CREDENTIALS) {
+                        def app = docker.build("${DOCKER_IMAGE}:${env.BUILD_NUMBER}", ".")
+                        app.push()
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts 'target/*.jar'
+        }
+    }
+}
